@@ -1,0 +1,160 @@
+###第一步：下载Django，pymysql,djangorestframework
+    pip install django
+    pip install pymysql
+    pip install djangorestframework
+###第二步：创建Django项目和应用
+    django-admin startproject image
+    django-admin startapp im
+###第三步：settings.py配置MySQL数据库，配置APP
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': "image",
+            'HOST': '127.0.0.1',
+            'USER': 'root',
+            'PASSWORD': 'xiaohaoge',
+            'PORT': 3306
+        }
+    }
+    
+    
+    INSTALLED_APPS = [
+        'django.contrib.admin',
+        'django.contrib.auth',
+        'django.contrib.contenttypes',
+        'django.contrib.sessions',
+        'django.contrib.messages',
+        'django.contrib.staticfiles',
+        'rest_framework',
+        'im',
+    ]
+###第四步：创建modes模型
+    class ImageModel(models.Model):
+    """图片模型"""
+    json_result = models.CharField(verbose_name="序列化之后的结果", max_length=255)
+    image = models.ImageField(upload_to='img', verbose_name='图片')
+
+    class Meta:
+        db_table = "im"
+        verbose_name = "图片识别"
+        verbose_name_plural = verbose_name
+###第五步：迁移数据库
+    python manage.py makemigrations
+    python manage.py migrate
+###第六步：创建serializers.py
+    from rest_framework import serializers
+    from .models import ImageModel
+    
+    
+    class ImageSerializer(serializers.ModelSerializer):
+        """图片的序列化器"""
+        class Meta:
+            model = ImageModel
+            fields = ['image']
+###第七步：在settings文件配置
+    MEDIA_ROOT = os.path.join(BASE_DIR, "uploads")
+
+    MEDIA_URL = "/media/"
+###第八步：创建uploads文件夹
+###第九步：创建utils文件夹，在该目录下创建chaojiying.py文件
+    import requests
+    from hashlib import md5
+    
+    class Chaojiying_Client(object):
+
+    def __init__(self, username, password, soft_id):
+        self.username = username
+        password = password.encode('utf8')
+        self.password = md5(password).hexdigest()
+        self.soft_id = soft_id
+        self.base_params = {
+            'user': self.username,
+            'pass2': self.password,
+            'softid': self.soft_id,
+        }
+        self.headers = {
+            'Connection': 'Keep-Alive',
+            'User-Agent': 'Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 5.1; Trident/4.0)',
+        }
+
+    def PostPic(self, im, codetype):
+        """
+        im: 图片字节
+        codetype: 题目类型 参考 http://www.chaojiying.com/price.html
+        """
+        params = {
+            'codetype': codetype,
+        }
+        params.update(self.base_params)
+        files = {'userfile': ('ccc.jpg', im)}
+        r = requests.post('http://upload.chaojiying.net/Upload/Processing.php', data=params, files=files, headers=self.headers)
+        return r.json()
+
+    def ReportError(self, im_id):
+        """
+        im_id:报错题目的图片ID
+        """
+        params = {
+            'id': im_id,
+        }
+        params.update(self.base_params)
+        r = requests.post('http://upload.chaojiying.net/Upload/ReportError.php', data=params, headers=self.headers)
+        return r.json()
+
+
+
+    def tranformImgCode(imgPath,imgType):
+        chaojiying = Chaojiying_Client('xiaohaoge', 'ghh5201314', '	905819')
+        im = open(imgPath, 'rb').read()
+        return chaojiying.PostPic(im,imgType)['pic_str']
+
+###第十步：写view试图代码
+    from django.shortcuts import render
+    
+    # Create your views here.
+    from .serializers import ImageSerializer
+    from rest_framework.views import APIView
+    from utils.chaojiying import tranformImgCode
+    from image.settings import BASE_DIR
+    import os
+    from rest_framework.response import Response
+    from .models import ImageModel
+    
+    
+    class ImageAPIView(APIView):
+
+    serializer_class = ImageSerializer
+    
+    def post(self, request, *args, **kwargs):
+        image = request.FILES['image']
+        for i in image:
+            with open('image.png', 'ab')as f:
+                f.write(i)
+        image_url = os.path.join(BASE_DIR, 'image.png')
+        result = tranformImgCode(image_url, 3004)
+        os.remove(BASE_DIR+'/image.png')
+        json_result = {"content": []}
+        for j in result:
+            json_result['content'].append(j)
+
+        instance = ImageModel.objects.create(
+            image=image,
+            json_result=json_result
+        )
+
+        return Response(json_result)
+
+###第十一步：配置urls路由
+    from django.conf.urls import url
+    from django.contrib import admin
+    from im import views
+    from django.conf import settings
+    from django.views.static import serve
+    
+    urlpatterns = [
+        url(r'^admin/', admin.site.urls),
+        url(r'image/', views.ImageAPIView.as_view()),
+        url(r'media/(?P<path>.*)', serve, {"document_root": settings.MEDIA_ROOT}),
+    ]
+
+###第十二步：启动Django，用postman测试，请查看`测试结果图.png`
